@@ -1,0 +1,80 @@
+name: Sync upstream ThreatFeed
+
+on:
+  schedule:
+    - cron: "30 13 * * *"   # daily 8:30 AM CDT / 7:30 AM CST, after upstream's ~7:30 AM CT Afraid update
+  workflow_dispatch: {}      # "Run workflow" button for a manual sync
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream into a staging branch
+        id: merge
+        run: |
+          git config user.name  "nbisd-feed-bot"
+          git config user.email "nbisd-feed-bot@users.noreply.github.com"
+          git remote add upstream https://github.com/1NobleCyber/ThreatFeed.git
+          git fetch --quiet upstream main
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "No new upstream commits."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "New upstream commits:"
+          git log --oneline HEAD..upstream/main | head -50
+          git checkout -B upstream-sync
+          git merge --no-edit -X theirs upstream/main
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Validate feeds against what iboss uses today
+        id: check
+        if: steps.merge.outputs.changed == 'true'
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          python3 -I scripts/validate_feeds.py . origin/main | tee validation.txt
+
+      - name: Publish to main (checks passed)
+        if: steps.merge.outputs.changed == 'true' && steps.check.outcome == 'success'
+        run: |
+          git push origin upstream-sync:main
+          echo "Published upstream changes to main." >> "$GITHUB_STEP_SUMMARY"
+          cat validation.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hold for review (checks failed)
+        if: steps.merge.outputs.changed == 'true' && steps.check.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push --force origin upstream-sync
+          {
+            echo "Upstream changes did **not** pass the automatic checks, so they were not published to iboss."
+            echo
+            echo '```'
+            cat validation.txt
+            echo '```'
+            echo
+            echo "Review the diff. Merge this PR to publish, or close it to skip these changes."
+          } > pr-body.md
+          if gh pr view upstream-sync --json state -q .state 2>/dev/null | grep -q OPEN; then
+            gh pr edit upstream-sync --body-file pr-body.md
+          else
+            gh pr create --base main --head upstream-sync \
+              --title "Upstream ThreatFeed changes need review" --body-file pr-body.md
+          fi
+          cat pr-body.md >> "$GITHUB_STEP_SUMMARY"
+          exit 1
