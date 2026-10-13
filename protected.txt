@@ -1,0 +1,26 @@
+# Sites that must never be blocked by this feed. One per line.
+# A feed entry that equals one of these, or is a parent domain of one, fails the check.
+nbisd.org
+google.com
+googleapis.com
+gstatic.com
+youtube.com
+apple.com
+icloud.com
+microsoft.com
+office.com
+live.com
+clever.com
+classlink.com
+instructure.com
+schoology.com
+blooket.com
+kahoot.com
+quizlet.com
+ixl.com
+khanacademy.org
+desmos.com
+getepic.com
+iboss.com
+ibosscloud.com
+jamfcloud.com
